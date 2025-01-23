@@ -1,0 +1,77 @@
+import json
+import pymongo
+import paho.mqtt.client as mqtt
+
+from datetime import datetime, timezone
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
+
+# MongoDB connection string
+db_uri = "mongodb+srv://sham:<dbpassword>@project357.2awiz.mongodb.net/?retryWrites=true&w=majority&appName=Project357"
+mongo_client = MongoClient(db_uri, server_api=ServerApi('1'))
+
+# Test MongoDB connection
+try:
+    mongo_client.admin.command('ping')
+    print("Successfully connected to MongoDB!")
+except Exception as error:
+    print(f"MongoDB connection failed: {error}")
+
+# Specify database and collection
+smart_home_db = mongo_client["smarthome"]
+iot_data_collection = smart_home_db["iot"]
+
+# MQTT configuration
+mqtt_host = ""
+mqtt_topic_name = ""
+
+# Define the MQTT connection callback
+def handle_mqtt_connect(mqtt_client, userdata, flags, rc):
+    if rc == 0:
+        print("MQTT connected successfully")
+        mqtt_client.subscribe(mqtt_topic_name)
+    else:
+        print(f"MQTT connection failed with code {rc}")
+
+# Define the MQTT message callback
+def handle_mqtt_message(mqtt_client, userdata, msg):
+    message_content = msg.payload.decode("utf-8")
+    print(f"Message received: {message_content}")
+    
+    try:
+        # Convert the message to JSON
+        message_json = json.loads(message_content)
+        pir_sensor_value = message_json.get("PIR")
+        door_sensor_value = message_json.get("Door")
+
+        # Get the current UTC timestamp
+        current_time = datetime.now(timezone.utc)
+
+        # Prepare the data document for MongoDB
+        record = {
+            "timestamp": current_time,
+            "pir_sensor": pir_sensor_value,
+            "door_sensor": door_sensor_value
+        }
+
+        # Insert the record into MongoDB
+        iot_data_collection.insert_one(record)
+        print("Data successfully saved to MongoDB")
+        
+    except json.JSONDecodeError as decode_error:
+        print(f"JSON decoding error: {decode_error}")
+    except Exception as general_error:
+        print(f"Unexpected error: {general_error}")
+
+# Initialize MQTT client
+mqtt_client_instance = mqtt.Client()
+
+# Assign the callbacks
+mqtt_client_instance.on_connect = handle_mqtt_connect
+mqtt_client_instance.on_message = handle_mqtt_message
+
+# Connect to the MQTT broker
+mqtt_client_instance.connect(mqtt_host, 1883, 60)
+
+# Start the MQTT loop
+mqtt_client_instance.loop_forever()
